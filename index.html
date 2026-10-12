@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>くるっとRUN</title>
+<style>
+body {
+  background: #eff7f4;
+  font-family: sans-serif;
+  padding: 20px;
+  color: #23483d;
+}
+h1 { text-align: center; }
+.card {
+  background: white;
+  border-radius: 20px;
+  padding: 25px;
+  margin-top: 25px;
+  box-shadow: 0 4px 16px #0001;
+}
+select, button {
+  width: 100%;
+  padding: 15px;
+  margin-top: 15px;
+  border-radius: 12px;
+  font-size: 18px;
+}
+button {
+  background: #35a77a;
+  color: white;
+  border: none;
+}
+</style>
+</head>
+<body>
+<h1>くるっとRUN 🏃</h1>
+<p style="text-align:center">
+今日のランニングコースを作ろう！
+</p>
+<div class="card">
+<h3>走りたい距離</h3>
+<select id="distance">
+<option value="3">3 km</option>
+<option value="5">5 km</option>
+<option value="10">10 km</option>
+</select>
+<button onclick="makeRoute()">
+コースを作成
+</button>
+<p id="result"></p>
+</div>
+<script>
+function makeRoute() {
+  const km = document.getElementById("distance").value;
+  document.getElementById("result").textContent =
+    km + "kmのコースを選択しました！";
+}
+</script>
+
+<h3>出発地点を選ぼう</h3>
+
+<div id="map" style="height:320px;width:100%;border-radius:16px;"></div>
+
+<p id="startPoint">地図をタップしてね！</p>
+
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+const runMap = L.map('map').setView([24.34,124.16],14);
+
+L.tileLayer(
+  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  {
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19
+  }
+).addTo(runMap);
+
+let startPin;
+
+runMap.on('click', function(e) {
+  if (startPin) {
+    startPin.setLatLng(e.latlng);
+  } else {
+    startPin = L.marker(e.latlng).addTo(runMap);
+  }
+
+  document.getElementById('startPoint').textContent =
+    'ここを出発地点に設定しました！';
+});
+</script>
+
+<script>
+let courseLine = null;
+let coursePoints = [];
+
+window.makeRoute = async function() {
+  const result = document.getElementById("result");
+
+  if (!startPin) {
+    result.textContent = "先に出発地点を選んでね！";
+    return;
+  }
+
+  const km = Number(document.getElementById("distance").value);
+  const start = startPin.getLatLng();
+  const side = km / 4 * 0.85;
+  const dy = side / 111.2;
+  const dx = side / (111.2 * Math.cos(start.lat * Math.PI / 180));
+
+  const points = [
+    {lat:start.lat, lon:start.lng},
+    {lat:start.lat+dy, lon:start.lng},
+    {lat:start.lat+dy, lon:start.lng+dx},
+    {lat:start.lat, lon:start.lng+dx},
+    {lat:start.lat, lon:start.lng}
+  ];
+
+  result.textContent = "コースを探しています…";
+
+  try {
+    const request = {
+      locations: points,
+      costing: "pedestrian",
+      units: "kilometers"
+    };
+
+    const url = "https://valhalla1.openstreetmap.de/route?json="
+      + encodeURIComponent(JSON.stringify(request));
+
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error("ルート検索に失敗");
+    }
+
+    const data = await response.json();
+    const coords = data.trip.legs.flatMap(
+      leg => decodeRoute(leg.shape)
+    );
+
+    if (courseLine) runMap.removeLayer(courseLine);
+    coursePoints.forEach(p => runMap.removeLayer(p));
+    coursePoints = [];
+
+    courseLine = L.polyline(coords, {
+      color: "#ff7a30",
+      weight: 6
+    }).addTo(runMap);
+
+    points.slice(1, 4).forEach((p, i) => {
+      const marker = L.circleMarker([p.lat, p.lon], {
+        radius: 7,
+        color: "#166c53",
+        fillOpacity: 1
+      }).addTo(runMap).bindTooltip("経由地" + (i+1));
+
+      coursePoints.push(marker);
+    });
+
+    runMap.fitBounds(courseLine.getBounds().pad(0.15));
+
+    result.textContent =
+      "提案コース：" +
+      data.trip.summary.length.toFixed(2) +
+      "km（目標 " + km + "km）";
+
+  } catch (error) {
+    result.textContent =
+      "コースを取得できませんでした。後でもう一度試してね。";
+  }
+};
+
+function decodeRoute(encoded) {
+  let index = 0, lat = 0, lng = 0;
+  const coords = [];
+
+  while (index < encoded.length) {
+    let shift = 0, result = 0, b;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 31) << shift;
+      shift += 5;
+    } while (b >= 32);
+
+    lat += result & 1 ? ~(result >> 1) : result >> 1;
+    shift = 0;
+    result = 0;
+
+    do {
+      b = encoded.charCodeAt(index++) - 63;
+      result |= (b & 31) << shift;
+      shift += 5;
+    } while (b >= 32);
+
+    lng += result & 1 ? ~(result >> 1) : result >> 1;
+    coords.push([lat / 1e6, lng / 1e6]);
+  }
+
+  return coords;
+}
+</script>
+
+<script>
+window.makeRoute = async function () {
+  const result = document.getElementById('result');
+
+  if (!startPin) {
+    result.textContent = '先に地図で出発地点を選んでね！';
+    return;
+  }
+
+  if (window.routeSearching) return;
+  window.routeSearching = true;
+
+  const target = Number(document.getElementById('distance').value);
+  const start = startPin.getLatLng();
+  const directions = [[-1,-1], [-1,1], [1,-1], [1,1]];
+  let best = null;
+  let count = 0;
+
+  try {
+    for (const [ns, ew] of directions) {
+      let side = target * 0.17;
+
+      for (let i = 0; i < 3; i++) {
+        if (count > 0) {
+          await new Promise(resolve => setTimeout(resolve, 1200));
+        }
+
+        count++;
+        result.textContent = `距離を調整中…（${count}/12）`;
+
+        const dy = ns * side / 111.2;
+        const dx = ew * side /
+          (111.2 * Math.cos(start.lat * Math.PI / 180));
+
+        const points = [
+          {lat: start.lat, lon: start.lng},
+          {lat: start.lat + dy, lon: start.lng},
+          {lat: start.lat + dy, lon: start.lng + dx},
+          {lat: start.lat, lon: start.lng + dx},
+          {lat: start.lat, lon: start.lng}
+        ];
+
+        let route;
+
+        try {
+          const request = {
+            locations: points,
+            costing: 'pedestrian',
+            units: 'kilometers'
+          };
+
+          const url =
+            'https://valhalla1.openstreetmap.de/route?json='
+            + encodeURIComponent(JSON.stringify(request));
+
+          const response = await fetch(url);
+
+          if (response.status === 429) {
+            throw new Error('混雑');
+          }
+
+          if (!response.ok) break;
+
+          const data = await response.json();
+
+          if (!data.trip?.legs?.length ||
+              !Number.isFinite(data.trip?.summary?.length)) {
+            break;
+          }
+
+  
+route = {
+  km: data.trip.summary.length,
+  points,
+  line: data.trip.legs.flatMap(
+    leg => decodeRoute(leg.shape)
+  ),
+  legs: data.trip.legs
+};
+
+
+        } catch (error) {
+          if (error.message === '混雑') throw error;
+          break;
+        }
+
+        if (!best ||
+            Math.abs(route.km - target) <
+            Math.abs(best.km - target)) {
+          best = route;
+        }
+
+        if (Math.abs(route.km - target) <= 0.2) break;
+
+        const correction = Math.max(
+          0.55,
+          Math.min(1.5, target / route.km)
+        );
+
+        side = Math.max(
+          target * 0.06,
+          Math.min(target * 0.29, side * correction)
+        );
+      }
+
+      if (best && Math.abs(best.km - target) <= 0.2) {
+        break;
+      }
+    }
+
+    if (courseLine) runMap.removeLayer(courseLine);
+
+    coursePoints.forEach(
+      p => runMap.removeLayer(p)
+    );
+
+    courseLine = null;
+    coursePoints = [];
+
+    if (!best || Math.abs(best.km - target) > 0.2) {
+      result.textContent =
+        '今回は目標の±200mに収まるコースが見つかりませんでした。出発地点を少し変えて試してね。'
+        + (best ? `（最も近い候補：${best.km.toFixed(2)}km）` : '');
+      return;
+    }
+
+    courseLine = L.polyline(best.line, {
+      color: '#ff7a30',
+      weight: 6
+    }).addTo(runMap);
+
+    
+
+const oldGuide = document.getElementById('routeGuide');
+if (oldGuide) oldGuide.remove();
+
+const guide = document.createElement('div');
+guide.id = 'routeGuide';
+guide.style.cssText =
+  'background:white;padding:15px;border-radius:15px;margin:12px 0;';
+
+guide.innerHTML = '<strong>曲がり角を順番に確認</strong>';
+result.insertAdjacentElement('afterend', guide);
+
+// 曲がる方向を日本語にする
+const turnLabels = {
+  9: 'ゆるく右',
+  10: '右折',
+  11: '大きく右折',
+  12: '右にUターン',
+  13: '左にUターン',
+  14: '大きく左折',
+  15: '左折',
+  16: 'ゆるく左',
+  18: '右へ進む',
+  19: '左へ進む',
+  20: '右へ出る',
+  21: '左へ出る',
+  23: '右寄りに進む',
+  24: '左寄りに進む',
+  26: 'ロータリーに入る',
+  27: 'ロータリーを出る',
+  37: '右へ合流',
+  38: '左へ合流'
+};
+
+const turns = [];
+let passed = 0;
+
+// 道路の曲がり角を取得する
+for (const leg of (best.legs || [])) {
+  const coords = decodeRoute(leg.shape);
+  const distances = [0];
+
+  for (let i = 1; i < coords.length; i++) {
+    distances.push(
+      distances[i - 1] +
+      runMap.distance(coords[i - 1], coords[i])
+    );
+  }
+
+  for (const move of (leg.maneuvers || [])) {
+    const label = turnLabels[move.type];
+    const index = move.begin_shape_index;
+
+    if (!label || !Number.isInteger(index) ||
+        !coords[index]) continue;
+
+    const meters = passed + distances[index];
+
+    if (meters < 50 ||
+        meters > best.km * 1000 - 50) continue;
+
+    turns.push({
+      point: coords[index],
+      meters: meters,
+      label: label
+    });
+  }
+
+  passed += distances[distances.length - 1];
+}
+
+// 走る順番に並べる
+turns.sort((a, b) => a.meters - b.meters);
+
+const maxPoints = 6;
+const mainTurns = [];
+
+if (turns.length > 0) {
+  for (let i = 0; i < maxPoints; i++) {
+    const targetMeter =
+      (i + 0.5) * best.km * 1000 / maxPoints;
+
+    const closest = turns.reduce((a, b) =>
+      Math.abs(b.meters - targetMeter) <
+      Math.abs(a.meters - targetMeter) ? b : a
+    );
+
+    if (!mainTurns.includes(closest)) {
+      mainTurns.push(closest);
+    }
+  }
+}
+
+mainTurns.sort((a, b) => a.meters - b.meters);
+
+// 地図に番号を表示する
+
+mainTurns.forEach((turn, i) => {
+
+  const number = i + 1;
+
+  const pin = L.marker(turn.point, {
+    icon: L.divIcon({
+      className: '',
+      html: `<div style="
+        background:#166c53;
+        color:white;
+        border:2px solid white;
+        border-radius:50%;
+        width:30px;
+        height:30px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        font-weight:bold;
+      ">${number}</div>`,
+      iconSize: [34, 34],
+      iconAnchor: [17, 17]
+    })
+  }).addTo(runMap);
+
+  pin.bindTooltip(`経由地${number}：${turn.label}`);
+  coursePoints.push(pin);
+
+  const link = document.createElement('a');
+
+  link.href =
+    `https://maps.apple.com/?ll=${turn.point[0].toFixed(6)},${turn.point[1].toFixed(6)}&q=${encodeURIComponent('経由地' + number)}`;
+
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+
+  link.textContent =
+    `${number}｜約${Math.round(turn.meters)}m地点｜${turn.label} → Appleマップ`;
+
+  link.style.cssText =
+    'display:block;padding:12px;margin-top:8px;background:#eff7f4;border-radius:10px;color:#166c53;';
+
+  guide.appendChild(link);
+});
+
+if (turns.length === 0) {
+  const message = document.createElement('p');
+  message.textContent = '曲がり角を取得できませんでした。';
+  guide.appendChild(message);
+}
+
+const note = document.createElement('p');
+note.textContent =
+  '道路データから取得した曲がり角です。Appleマップで経路を作るときは、オレンジ色の線も確認してね。';
+note.style.cssText =
+  'font-size:13px;color:#666;margin-top:12px;';
+
+guide.appendChild(note);
+
+
+
+    runMap.fitBounds(
+      courseLine.getBounds().pad(0.15)
+    );
+
+    
+result.textContent =
+  `できた！${best.km.toFixed(2)}km（目標${target}km）`;
+
+const routeStart = best.line[0];
+const routeEnd = best.line[best.line.length - 1];
+
+const startGap = Math.round(
+  runMap.distance(start, routeStart)
+);
+
+const endGap = Math.round(
+  runMap.distance(start, routeEnd)
+);
+
+result.textContent +=
+  `｜開始地点との差：${startGap}m` +
+  `｜ゴール地点との差：${endGap}m`;
+
+
+  } catch (error) {
+    result.textContent = error.message === '混雑'
+      ? 'ルート検索サービスが混雑しています。少し時間を置いて再試行してね。'
+      : 'コースを取得できませんでした。通信を確認してね。';
+  } finally {
+    window.routeSearching = false;
+  }
+};
+</script>
+
+</body>
+
+</html>
